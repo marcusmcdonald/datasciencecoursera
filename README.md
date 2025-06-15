@@ -1,2 +1,3 @@
 # datasciencecoursera
-Data Science Specialization offered by JHU on Coursera 
+University of Colorado Boulder
+Data Science

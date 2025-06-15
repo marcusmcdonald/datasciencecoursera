@@ -1,0 +1,556 @@
+---
+title: "Global And U.S. COVID-19"
+author: "Marcus J. McDonald"
+date: "2025-06-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, echo=FALSE, message=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+## ***Introduction***
+This report analyzes Global and U.S. COVID-19 outbreak data provided by Johns Hopkins University. The specific files used were provided by via GitHub [links](#references) provided to the class (see References). Further information about the datasets is provided [here](https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_time_series). This data goes back to the start of the pandemic and can be used to understand how the timing of new COVID-19 cases relates to the total number of deaths. 
+
+This report also identifies which countries have experienced the highest and lowest case and death counts. Using the provided dataset on confirmed cases and deaths, the fatality rates per country are examined and the report seeks to determine whether there's a meaningful correlation between when cases began being reported and the eventual impact in terms of death rate.
+
+## ***Data Overview***
+There are principally four datasets, two of which give the confirmed COVID-19 cases and deaths on a global (country by country basis) and the other two give us U.S. cases and deaths organized by counties and states. The initial datasets are organized with dates on the columns with each date tallying the count for that day.
+```{r csv_data, echo=FALSE, message=FALSE}
+url_base <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+csv_files <- c(
+  "time_series_covid19_confirmed_US.csv",
+  "time_series_covid19_deaths_US.csv",
+  "time_series_covid19_confirmed_global.csv",
+  "time_series_covid19_deaths_global.csv"
+)
+
+urls <- str_c(url_base, csv_files)
+
+us_cases <- read_csv(urls[1])
+us_deaths <- read_csv(urls[2])
+global_cases <- read_csv(urls[3])
+global_deaths <- read_csv(urls[4])
+```
+
+
+Below is an example of how the pre-cleaned data appears in the dataframe:
+
+### Global Cases
+```{r global_cases_head}
+head(global_cases)
+```
+
+### Global Deaths
+```{r global_deaths_head}
+head(global_deaths)
+```
+
+### U.S. Cases
+```{r us_cases_head}
+head(us_cases)
+```
+
+### U.S. Deaths
+```{r us_deaths_head}
+head(us_deaths)
+```
+
+An interesting note about the datasets is that the datasets provide information on Cruise Ships and their corresponding cases and deaths. These cruise ships are associated with the country of origin and are treat like states or regions in the datasets. Thus, they are treated the same in the following cleaning and analysis stages.
+
+## ***Tidy and Transform***
+Here the data is cleaned and transformed into useful dataframes for exploring COVID-19 cases and deaths. These cleaning steps will allow us the more easily explore and plot the data.
+
+The steps taken to clean the data begin with steps similar to those steps taken in the lecture of week 3. Here I will provide steps broken down into individual steps for clarity. It is noted that many of these steps could be consolidated but for simplicity I find it best to take these cleaning steps in chunks.
+
+
+### Cleaning Global Data
+```{r global_clean, warning=FALSE, message=FALSE}
+# Cleaning the global cases data
+global_cases_clean <- global_cases %>%
+  pivot_longer(
+    cols = -c(
+      `Province/State`,
+      `Country/Region`,
+      Lat,
+      Long
+    ),
+    names_to = "date",
+    values_to = "cases"
+  ) %>%
+  select(-c(Lat, Long))
+
+# Cleaning the global deaths data
+global_deaths_clean <- global_deaths %>%
+  pivot_longer(
+    cols = -c(
+      `Province/State`,
+      `Country/Region`,
+      Lat,
+      Long
+    ),
+    names_to = "date",
+    values_to = "deaths"
+  ) %>%
+  select(-c(Lat, Long))
+
+# Combining cases and deaths into a single data frame
+global_clean <- global_cases_clean %>%
+  full_join(global_deaths_clean) %>%
+  rename(
+    Country_Region = `Country/Region`,
+    Province_State = `Province/State`
+  ) %>%
+  mutate(date = mdy(date))
+
+# This filter removes any spurious cases from the dataset
+global_clean <- global_clean %>% filter(cases > 0)
+```
+#### Head of global_clean
+```{r global_clean_head}
+head(global_clean)
+```
+
+
+### Cleaning U.S. Data
+```{r us_clean, message=FALSE, warning=FALSE}
+# Cleaning the U.S. cases data
+us_cases_clean <- us_cases %>%
+  pivot_longer(
+    cols = -(UID:Combined_Key),
+    names_to = "date",
+    values_to = "cases"
+  ) %>%
+  select(Admin2:cases) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+# Cleaning the U.S. deaths data
+us_deaths_clean <- us_deaths %>%
+  pivot_longer(
+    cols = -(UID:Combined_Key),
+    names_to = "date",
+    values_to = "deaths"
+  ) %>%
+  select(Admin2:deaths) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+# Combining cases and deaths into a single data frame
+us_clean <- us_cases_clean %>%
+  full_join(us_deaths_clean) %>%
+  rename(
+    County = `Admin2`,
+    State = `Province_State`
+  )
+# Again removing spurious cases from dataset
+us_clean <- us_clean %>% filter(cases > 0)
+```
+
+#### Head of us_clean
+```{r us_clean_head}
+head(us_clean)
+```
+
+
+As we can see, the data is reshaped for ease of use. The global (and the U.S.) datasets were cleaned by pivoting the time-series columns into unified variables separating out case and death counts. Fields like Lat and Long were dropped as they where not necessary to the kinds of exploration Intended in this report. Afterward, the cases and deaths data was combined into a single dataset.
+
+Both the global and U.S. datasets are filtered and joined appropriately to allow for the visualization and analysis being highlighted in this report below.
+
+## ***Visualizations and Analysis***
+In this section we will use the data transformations from the cleaning step to provide some analysis of the COVID-19 Global and U.S. datasets. Furthermore, we will perform some statistical analysis and provide visualizations to answer the following questions.
+
+1. [Which countries have reported the highest and lowest number of total cases and deaths?](#which-countries-and-us-states-have-reported-the-highest-and-lowest-number-of-total-cases-and-deaths)
+2. [What countries have the highest fatality Rates?](#what-countries-have-the-highest-fatality-rates)
+3. [How do cases and deaths grow over time?](#how-do-cases-and-deaths-grow-over-time)
+4. [Is there a correlation between the time of outbreak and the total number of deaths per country?](#is-there-a-correlation-between-the-inital-outbreak-and-the-total-number-of-deaths-per-country)
+5. [Does a similar correlation exists between U.S. States (question 3)?](#does-a-similar-correlation-exists-between-u.s.-states-question-3)
+6. [Can we group countries based on their outbreak trajectories?](#can-we-group-countries-based-on-their-outbreak-trajectories)
+
+
+#### 1. Which countries (and US States) have reported the highest and lowest number of total cases and deaths?
+
+```{r high_low_cases_deaths}
+# From the clean Global and US datasets above,
+datasets <- list(Global = global_clean, US = us_clean)
+
+results <- list()
+
+for (name in names(datasets)) {
+  data <- datasets[[name]]
+
+  column_totals <- data %>%
+    {
+      if (name == "Global") group_by(., Country_Region) else group_by(., State)
+    } %>%
+    summarise(
+      total_cases = max(cases, na.rm = TRUE),
+      total_deaths = max(deaths, na.rm = TRUE)
+    )
+
+  top_cases <- column_totals %>%
+    arrange(desc(total_cases)) %>%
+    slice_head(n = 5)
+
+  top_deaths <- column_totals %>%
+    arrange(desc(total_deaths)) %>%
+    slice_head(n = 5)
+
+  bottom_cases <- column_totals %>%
+    filter(total_cases > 0) %>%
+    arrange(total_cases) %>%
+    slice_head(n = 5)
+
+  bottom_deaths <- column_totals %>%
+    filter(total_deaths > 0) %>%
+    arrange(total_deaths) %>%
+    slice_head(n = 5)
+
+  results[[name]] <- list(
+    Top_Cases = top_cases,
+    Top_Deaths = top_deaths,
+    Bottom_Cases = bottom_cases,
+    Bottom_Deaths = bottom_deaths
+  )
+}
+
+```
+##### Globally
+This top and bottom cases and deaths by country are:
+
+```{r global_cases_deaths_tables, echo=FALSE}
+knitr::kable(as.data.frame(results$Global$Top_Cases[, c(1,2)]), caption = "Global Top Cases")
+knitr::kable(as.data.frame(results$Global$Bottom_Cases[, c(1,2)]), caption = "Global Bottom Cases")
+knitr::kable(as.data.frame(results$Global$Top_Deaths[, c(1,3)]), caption = "Global Top Deaths")
+knitr::kable(as.data.frame(results$Global$Bottom_Deaths[, c(1,3)]), caption = "Global Bottom Deaths")
+```
+
+
+##### United States
+This top and bottom cases and deaths by State are:
+
+```{r us_cases_deaths_tables, echo=FALSE}
+knitr::kable(as.data.frame(results$US$Top_Cases[, c(1,2)]), caption = "US Top Cases")
+knitr::kable(as.data.frame(results$US$Bottom_Cases[, c(1,2)]), caption = "US Bottom Cases")
+knitr::kable(as.data.frame(results$US$Top_Deaths[, c(1,3)]), caption = "US Top Deaths")
+knitr::kable(as.data.frame(results$US$Bottom_Deaths[, c(1,3)]), caption = "US Bottom Deaths")
+
+```
+
+
+From the tables above we can see a couple interesting facts. Firstly, places with high cases tended to also have high deaths. Secondly, places with high cases and deaths seem to be countries (or states in the case of the US specific data) with known higher population density. Also, Cruise Ships such as Grand Princess appear in the data as having reasonably low cases and deaths.
+
+#### 2. What countries have the highest fatality Rates?
+```{r fatality_rate, warning=FALSE}
+# Summarize total cases and deaths per country
+fatality_df <- global_clean %>%
+  group_by(Country_Region) %>%
+  summarise(
+    total_cases = sum(cases, na.rm = TRUE),
+    total_deaths = sum(deaths, na.rm = TRUE)
+  ) %>%
+  filter(total_cases > 1000) %>%  # Filter out small sample countries
+  mutate(rate = total_deaths / total_cases) %>%
+  arrange(desc(rate))
+
+top10_fatalities <- fatality_df %>% slice_max(rate, n = 10)
+
+ggplot(top10_fatalities, aes(x = reorder(Country_Region, rate), y = rate)) +
+  geom_col(fill = "firebrick") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+  coord_flip() +
+  labs(
+    title = "Top 10 Countries (or Entities) by COVID-19 Case Fatality Rate",
+    x = "Country (or Entity)",
+    y = "Fatality Rate (Deaths / Cases)"
+  ) +
+  theme_minimal()
+```
+
+
+The per country fatality rate is defined as:
+  $$
+  \text{Fatality Rate} = \frac{\text{Total Deaths}}{\text{Total Cases}}
+  $$
+
+#### 3. How do cases and deaths grow over time?
+
+```{r cases_and_deaths_log_scale, warning=FALSE}
+# Prepare datasets
+datasets <- list(Global = global_clean, US = us_clean)
+
+# Loop through each dataset to process and plot
+for (name in names(datasets)) {
+  data <- datasets[[name]]
+  
+  # Aggregate totals by date and reshape for plotting
+  totals <- data %>%
+    group_by(date) %>%
+    summarise(
+      total_cases = sum(cases, na.rm = TRUE),
+      total_deaths = sum(deaths, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    pivot_longer(
+      cols = c(total_cases, total_deaths),
+      names_to = "type",
+      values_to = "count"
+    ) %>%
+    mutate(type = recode(type, total_cases = "Cases", total_deaths = "Deaths"))
+  
+  # Plot
+  p <- ggplot(totals, aes(x = date, y = count, fill = type, color = type)) +
+    geom_area(alpha = 0.3, position = "identity") +
+    geom_line(size = 1) +
+    scale_y_log10(labels = scales::label_number(accuracy = 1)) +
+    scale_color_manual(
+      values = c("Cases" = "lightblue", "Deaths" = "firebrick2")
+    ) +
+    scale_fill_manual(
+      values = c("Cases" = "lightblue", "Deaths" = "firebrick2")
+    ) +
+    labs(
+      title = paste(name, "COVID-19 Cases and Deaths Over Time (Log Scale)"),
+      x = "Date",
+      y = "Cumulative Count (log scale)",
+      fill = "Metric",
+      color = "Metric"
+    ) +
+    theme_minimal()
+  
+  print(p)
+}
+```
+
+Here we display the Cases vs. Deaths on log-scale to make the exponential growth pattern more visible. On a linear plot the number of cases dwarfs the number of deaths so much that we can't quite see the relationship between the number of Cases and Deaths. On log-scale we can see that there are a lot more cases than deaths but we see that they essentially grow together. This result is true for both the global data and the US data.
+
+
+#### 4. Is there a correlation between the inital outbreak and the total number of deaths per country?
+
+For this analysis initial outbreak will be defined as the first date for which a country reported any cases whatsoever.
+
+To get the initial outbreak:
+```{r global_init_outbreak}
+first_case_date <- global_clean %>%
+  group_by(Country_Region) %>%
+  filter(cases > 0) %>%
+  summarise(first_outbreak_date = min(date))
+
+```
+Note: Initial outbreak is essentially defined as the date of the first outbreak.
+
+
+To get the total deaths per country:
+```{r global_total_deaths}
+total_deaths <- global_clean %>%
+  group_by(Country_Region) %>%
+  summarise(total_deaths = sum(deaths, na.rm = TRUE))
+
+```
+
+Now we must create a new dataframe with `first_case_data` and `total_deaths`:
+```{r global_outbreak_data}
+outbreak_data <- first_case_date %>%
+  left_join(total_deaths, by = "Country_Region") %>%
+  mutate(outbreak_day = as.numeric(first_outbreak_date - min(first_outbreak_date)))
+```
+
+It is assumed by the author (me) that the correlation is non-linear and not normally distributed given the need to display the Cases vs. Deaths plots in log-scale. Therefore, we will use the Spearman correlation test to determine if we can conclude that initial outbreak can be shown to correlate with the number of deaths.
+
+For this test we will define the Null and Alternative hypothesizes as follows:
+
+##### Null Hypothesis (H₀):
+
+> There is no correlation between the inital outbreak and the total number of deaths per country.
+
+$$
+H_0: \rho = 0
+$$
+
+Where $\rho$ is the population correlation coefficient.
+
+
+##### Alternative Hypothesis (H₁):
+
+> There is a correlation between the inital outbreak and the total number of deaths per country.
+
+$$
+H_1: \rho \ne 0
+$$
+
+
+```{r global_spearman_cor, warning=FALSE}
+cor.test(outbreak_data$outbreak_day, outbreak_data$total_deaths, method = "spearman")
+```
+
+Given that the ***p-value*** is significantly lower than the typical $$ \alpha = 0.05 $$
+ this indicates that there is an extremely statistically significant result. We can therefore ***reject*** the Null Hypothesis of there being no correlation. Furthermore, we can conclude that countries with earlier outbreaks tend to have higher total deaths.
+
+
+
+#### 5. Does a similar correlation exists between U.S. States (question 3)?
+***Note: The same Null and Alternative Hypothesis from above, apply to this question as well.***
+
+To get the initial outbreak:
+```{r us_init_outbreak}
+first_case_date <- us_clean %>%
+  group_by(State) %>%
+  filter(cases > 0) %>%
+  summarise(first_outbreak_date = min(date))
+
+```
+
+To get the total deaths by state:
+```{r us_total_deaths}
+total_deaths <- us_clean %>%
+  group_by(State) %>%
+  summarise(total_deaths = sum(deaths, na.rm = TRUE))
+
+```
+
+Now we must create a new dataframe with `first_case_data` and `total_deaths`:
+```{r us_outbreak_data}
+outbreak_data <- first_case_date %>%
+  left_join(total_deaths, by = "State") %>%
+  mutate(outbreak_day = as.numeric(first_outbreak_date - min(first_outbreak_date)))
+```
+
+Correlation test:
+```{r us_spearman_cor, warning=FALSE}
+cor.test(outbreak_data$outbreak_day, outbreak_data$total_deaths, method = "spearman")
+```
+
+Given the results of the Spearman Correlation test for the US States we can similarly conclude that the Null Hypothesis can be rejected and that there is a significant correlation associated with initial outbreak dates and higher death tolls.
+
+
+#### 6. Can we group countries based on their outbreak trajectories?
+Here a `kmeans clustering model` is used to identify groups that were on the same or similar COVID-19 outbreak trajectories.
+
+The model is constructed as follows:
+
+```{r global_kmeans, warning=FALSE}
+# Prepare the data as before
+country_cases_wide <- global_cases_clean %>%
+  mutate(date = ymd(date)) %>%
+  group_by(`Country/Region`, date) %>%
+  summarise(cases = sum(cases, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = date, values_from = cases, values_fill = 0)
+
+cases_matrix <- country_cases_wide %>%
+  select(-`Country/Region`) %>%
+  as.matrix()
+
+# Scale the data
+cases_scaled <- scale(cases_matrix)
+
+# Perform PCA
+pca_result <- prcomp(cases_scaled)
+
+# Build K-means clustering model
+set.seed(123)
+k_clusters <- kmeans(cases_scaled, centers = 3, nstart = 25)
+
+# Combine PCA results and clusters
+pca_df <- as.data.frame(pca_result$x[, 1:2])  # Use first 2 PCs
+pca_df$Country <- country_cases_wide$`Country/Region`
+pca_df$Cluster <- factor(k_clusters$cluster)
+
+# Plot with ggplot2
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Cluster, label = Country)) +
+  geom_point(size = 3, alpha = 0.7) +
+  geom_text(size = 2.5, vjust = 1.5, hjust = 1.1, check_overlap = TRUE) +
+  labs(title = "Country Clustering Based on COVID-19 Outbreak (PCA View)",
+       x = "PC 1", y = "PC 2") +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1")
+
+# See References for more info on how to build cluster plots with ggplot2
+# The steps where followed from the help given in stack overflow articles
+
+```
+
+After doing the principal component analysis steps, we plot three distinct clusters. Interestingly, we see that the US creates a cluster by itself. Therefore, it is worthwhile to take a look at the US data to see how the states possibly for clusters.
+
+#### Follow-on Question: How do US States group based on their outbreak trajectories?
+
+Kmeans clustering model for US States:
+
+```{r us_kmeans, warning=FALSE}
+# Prepare the data as before
+state_cases_wide <- us_cases_clean %>%
+  mutate(date = ymd(date)) %>%
+  group_by(Province_State, date) %>%
+  summarise(cases = sum(cases, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = date, values_from = cases, values_fill = 0)
+
+cases_matrix <- state_cases_wide %>%
+  select(-Province_State) %>%
+  as.matrix()
+
+# Scale the data
+cases_scaled <- scale(cases_matrix)
+
+# Perform PCA
+pca_result <- prcomp(cases_scaled)
+
+# Build K-means clustering model
+set.seed(123)
+k_clusters <- kmeans(cases_scaled, centers = 3, nstart = 25)
+
+# Combine PCA results and clusters
+pca_df <- as.data.frame(pca_result$x[, 1:2])  # Use first 2 PCs
+pca_df$Country <- state_cases_wide$Province_State
+pca_df$Cluster <- factor(k_clusters$cluster)
+
+# Plot with ggplot2
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Cluster, label = Country)) +
+  geom_point(size = 3, alpha = 0.7) +
+  geom_text(size = 2.5, vjust = 1.5, hjust = 1.1, check_overlap = TRUE) +
+  labs(title = "State Clustering Based on COVID-19 Outbreak (PCA View)",
+       x = "PC 1", y = "PC 2") +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1")
+```
+
+In addition to seeing which groups appear as a result of the kmeans modeling, we can visual varify that the group with California, Florida, New York, and Texas makes a lot of sense as those states are associated with earlier and larger outbreaks than other states.
+
+
+## ***Conclusion***
+The goal of this report was to present a view of the global COVID-19 pandemic through the use of data and visualizations. This report set out to explore the global impact of COVID-19 by asking targeted questions and backing them with relevant statistical analysis (hopefully). The report examined cases and deaths across countries and cases and deaths across states within the United States of America. This report doesn't attempt to explain underlying cause or issues related to the pandemic, but, it builds a clearer picture of where the pandemic hit hardest.
+
+From the above analysis we saw which countries and which US states held the highest and lowest Case and Death rates. We saw that there was strong evidence for statistically significant correlation between initial case date and higher numbers of deaths for both Global cases and deaths and US cases and deaths. Finally, we model clusters of countries and states to see which groups were formed and what that says about the outbreak and deaths.
+
+
+## ***Bias Identification***
+I think the two major sources of bias that are likely in the data provided are caused by under reporting and delayed reporting. The biases related to under reporting could be cause by the individual country's capacity to test it's population for the virus. Also, deaths may not have been linked to COVID or the cause of death for some people may not have been known or report at the time. Delay report might be caused by the social pressure for countries to appear less affected by the COVID outbreak. This kind of delay might skew results found in time series data. I think both of these types of bias could have been further exacerbated by the fact that COVID-19 test kits were woefully unavailable to test centers and hospitals alike.
+
+
+## ***References***
+
++ COVID19 dataset from the CSSE GitHub site, May 30, 2025,
+
+    https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv
+    https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv 
+    https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv
+    https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv
+
++ DTSA 5301 Data Science as a Field, Week 3 Lectures, Instructor Jane Wall, Accessed May 30, 2025
+    (These Lectures provided the initial cleaning steps for the COVID-19 data)
+
+
++ Plot Clustered Data by kmeans with colors for clusters and shapes for external labels, June 03, 2025
+
+    https://datascience.stackexchange.com/questions/122510/plot-clustered-data-by-kmeans-with-colors-for-clusters-and-shapes-for-external-l
+
++ stackoverflow: Kmean clustering in ggplot, June 04, 2025 https://stackoverflow.com/questions/59076581/kmean-clustering-in-ggplot (Shows ways to plot clusters using ggplot2)
+
+
+## Session Information
+```{r session_info}
+sessionInfo()
+```

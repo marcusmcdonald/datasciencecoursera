@@ -1,0 +1,232 @@
+---
+title: "NYPD Shooting Incident Data Report"
+author: "Marcus J. McDonald"
+date: "2025-05-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, echo=FALSE, message=FALSE}
+library(tidyverse)
+library(lubridate)
+library(hms)
+# library(ggplot2)
+```
+
+
+## Introduction
+
+This document provides some analysis of the shooting incident data provided by the New York Police Department (NYPD). The CSV file link for the dataset was retrieved on May 23, 2025 via [Data.gov](https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic). The Dataset provides a breakdown of every shooting incident that occurred in New York City (NYC) from 2006 through the end of the previous calendar year.
+
+```{r, echo=FALSE, message=FALSE}
+# NYPD Shooting Incident Data Report (Historic) CSV
+url = "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv"
+nypd_shooting_incidents = read_csv(url)
+```
+
+
+## Data Overview
+
+According to the site description, this data is "manually extracted every quarter and reviewed by the Office of Management Analysis and Planning before being posted on the NYPD website." Each record represents a shooting incident in NYC and includes the following information:
+
+```{r}
+summary(nypd_shooting_incidents)
+```
+
+The **pre-cleaning** format is as follows:
+
+```{r}
+head(nypd_shooting_incidents)
+```
+
+
+## Tidy and Transform
+
+Below are the steps I took to clean the data. Each step taken is broken out in to the corresponding individual steps. It is known to the author of this document that these steps could have been aggregated into a single tidy command. However, I am making an attempt to show my process here.
+
+### Step 1: Fix Date and time
+```{r}
+nypd_shooting_incidents <- nypd_shooting_incidents %>%
+  mutate(
+    OCCUR_DATE = mdy(OCCUR_DATE),
+    OCCUR_TIME = as_hms(OCCUR_TIME)
+  )
+
+```
+
+### Step 2: Replace missing values and "UNKOWN" with NA
+```{r}
+nypd_shooting_incidents <- nypd_shooting_incidents %>%
+  mutate(
+    across(
+      c(PERP_SEX, PERP_RACE, PERP_AGE_GROUP), ~ na_if(.x, "(null)")
+    ) %>%
+      mutate(across(everything(), ~ na_if(.x, "UNKNOWN")))
+  )
+```
+
+### Step 3: Convert categorical data to factors
+```{r}
+nypd_shooting_incidents <- nypd_shooting_incidents %>%
+  mutate(
+    across(
+      c(BORO, LOC_OF_OCCUR_DESC, LOC_CLASSFCTN_DESC, LOCATION_DESC,
+        PERP_AGE_GROUP, PERP_SEX, PERP_RACE,
+        VIC_AGE_GROUP, VIC_SEX, VIC_RACE),
+      as.factor
+    )
+  )
+```
+
+### Step 4: Drop Coordinates, Latitude, Longitude, etc.
+```{r}
+nypd_shooting_incidents <- nypd_shooting_incidents %>%
+  select(-c(X_COORD_CD, Y_COORD_CD, Latitude, Longitude, Lon_Lat))
+```
+
+### Final: NYPD Shooting Incident Data (Clean)
+```{r}
+summary(nypd_shooting_incidents)
+```
+
+The **post-cleaning** format is as follows:
+```{r}
+head(nypd_shooting_incidents)
+```
+
+
+## Visualizations and Analysis
+### Question 1: What is the distribution of victim age groups by gender?
+```{r}
+# Question 1: What is the distribution of victim age groups by gender?
+victim_age_sex <- nypd_shooting_incidents %>%
+  filter(!is.na(VIC_AGE_GROUP), !is.na(VIC_SEX)) %>%
+  count(VIC_SEX, VIC_AGE_GROUP)
+
+ggplot(victim_age_sex, aes(x = VIC_AGE_GROUP, y = n, fill = VIC_SEX)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Victim Age Group Distribution by Gender",
+    x = "Victim Age Group",
+    y = "Number of Victims",
+    fill = "Victim Gender"
+  ) +
+  theme_minimal()
+```
+
+From the data we can conclude that most of the shooting incidents in the NYPD Shooting Incident Report affects males in the two groups: 18-24 and 25-44 predominately. This trend suggests that young to middle-aged males are at highest risk of gun violence in NYC versus other demographics. 
+
+
+### Question 2: How have shootings varied over time by borough?
+
+This question looks at the raise and fall of shootings by borough. This plot helps us see at a glance whether or not shootings are going up or down.
+```{r, warning=FALSE}
+# Question 2: How have shootings varied over time by borough?
+shootings_by_year_boro <- nypd_shooting_incidents %>%
+  mutate(year = year(OCCUR_DATE)) %>%
+  filter(!is.na(BORO)) %>%
+  count(year, BORO)
+
+ggplot(shootings_by_year_boro, aes(x = year, y = n, color = BORO)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(
+    title = "Annual Shooting Incidents by Borough",
+    x = "Year",
+    y = "Number of Incidents",
+    color = "Borough"
+  ) +
+  theme_minimal()
+```
+
+From this plot we can see that shooting incidents are not evenly distributed across New York City. Also, we can see that even though Brooklyn has had a higher number of shooting incidents in the past, it looks like in recent years they have seen a fall in shooting incidences. In the latest year data we see that the Bronx has seen an uptick in shooting incidences. From these facts and noticing the slight uptick in shootings for the Bronx we might ask the follow-up question below.
+
+### Follow-on Question: How do time and location affect shootings in the Bronx?
+
+Given that the data showed the Bronx has having historically higher rates of shooting incidences,
+I wondered where and at what hour shootings were occurring in the Bronx. Note: A similar heatmap could be generated for all of the boroughs.
+```{r}
+# How do time and location affect shootings in the Bronx?
+location_time_boro <- nypd_shooting_incidents %>%
+  filter(BORO=="BRONX", !is.na(OCCUR_TIME), !is.na(LOC_CLASSFCTN_DESC)) %>%
+  mutate(
+    hour = hour(OCCUR_TIME),
+    LOC_CLASSFCTN_DESC = fct_lump_n(LOC_CLASSFCTN_DESC, n = 6)  # Top 6 + "Other"
+  ) %>%
+  count(BORO, hour, LOC_CLASSFCTN_DESC)
+
+ggplot(location_time_boro, aes(x = hour, y = LOC_CLASSFCTN_DESC, fill = n)) +
+  geom_tile(color = "white") +
+  facet_wrap(~ BORO, ncol = 2) +
+  scale_fill_viridis_c(option = "C") +
+  labs(
+    title = "Shootings by Hour and Location Type (The Bronx Only)",
+    x = "Hour of Day",
+    y = "Location Classification",
+    fill = "Shootings"
+  ) +
+  theme_minimal() +
+  theme(strip.text = element_text(size = 12, face = "bold"))
+```
+
+From the graph we can see that the majority of shootings in the Bronx happened on the street and at late hours in the night. Also, we can see on the heat map that the later hours of the day seem to be more active for shooting regardless of location but by far the most activity is seen on the street.
+
+### One Last Follow-on Question: How do time and location affect shootings in the other Boroughs?
+
+```{r}
+library(forcats)
+
+# Prepare the data excluding BRONX
+location_time_other_boros <- nypd_shooting_incidents %>%
+  filter(
+    BORO != "BRONX",
+    !is.na(OCCUR_TIME),
+    !is.na(LOC_CLASSFCTN_DESC),
+    !is.na(BORO)
+  ) %>%
+  mutate(
+    hour = hour(OCCUR_TIME),
+    LOC_CLASSFCTN_DESC = fct_lump_n(LOC_CLASSFCTN_DESC, n = 6)
+  ) %>%
+  count(BORO, hour, LOC_CLASSFCTN_DESC)
+
+# Plot the heatmaps excluding BRONX
+ggplot(location_time_other_boros, aes(x = hour, y = LOC_CLASSFCTN_DESC, fill = n)) +
+  geom_tile(color = "white") +
+  facet_wrap(~ BORO, ncol = 2) +
+  scale_fill_viridis_c(option = "C") +
+  labs(
+    title = "Shootings by Hour and Location Type (Other Boroughs)",
+    x = "Hour of Day",
+    y = "Location Classification",
+    fill = "Shootings"
+  ) +
+  theme_minimal() +
+  theme(strip.text = element_text(size = 12, face = "bold"))
+```  
+
+Presented above is a similar heatmaps of Shootings by hour and location for the other Boroughs. We see that that street is also the most likely place for shooting incidences to occur in most other boroughs. with similar hours being the "hottest."
+
+
+
+## Conclusion and Bias Identification
+
+Analysis of NYPD shooting incident data provides us with several noticeable patterns. Firstly, reported shootings are not randomly distributed within New York City, with the highest number having occurred historically in Brooklyn. The most recent data in the report shows a decline in Brooklyn and an uptick in the Bronx. 
+
+While this dataset can be used to provide some insights into NYC shooting patterns, there are some sources of bias that should be considered regarding the dataset. Reporting bias can impact the validity of the reported incidents. The data provide could reflect more information about ares that are "over-policed," making one group seem more responsible for shooting incidences than might otherwise be true. Also, a large proportion of entries lack demographic information, limiting any firm conclusions being drawn.
+
+On the subject of bias and identifying bias in the data, I think a person I might have is that I tend to be very skeptical of the accuracy of the reported information. My bias might also dovetail into the over-policing idea. I can see how having pre-existing notions or beliefs about how policing is conducted can color how I view the validity of the data collected.
+
+
+## Reference(s)
+NYPD Shooting Incident Data (Historic). City of New York, May 24, 2025, https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv.
+
+
+## Session Information
+```{r}
+sessionInfo()
+```
